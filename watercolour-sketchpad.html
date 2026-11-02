@@ -247,7 +247,7 @@ const TUNING = [
   { id: "front", label: "Spreading into dry paper", min: 0, max: 0.2, step: 0.005, def: 0.06,
     desc: "How fast a wet area creeps outward over dry paper. Only water above the Flow setting's spread level moves." },
   { id: "pspread", label: "Pigment spread in water", min: 0, max: 0.15, step: 0.005, def: 0.015,
-    desc: "How fast pigment spreads through still water. Higher gives softer wet-in-wet edges but fills blooms back in." },
+    desc: "How fast pigment spreads through still damp paper. Pooled water on the surface spreads it eight times faster. Higher gives softer wet-in-wet edges but fills blooms back in." },
   { id: "push", label: "Pigment push", min: 0, max: 30, step: 1, def: 10,
     desc: "How strongly a sudden rush of water pushes pigment ahead of it. Makes blooms." },
   { id: "pushMin", label: "Push threshold", min: 0, max: 0.3, step: 0.01, def: 0.12,
@@ -375,7 +375,7 @@ void main(){ vec2 p = vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position = vec
 const FS_STEP = `#version 300 es
 precision highp float; precision highp int;
 uniform sampler2D uWP; uniform sampler2D uD; uniform sampler2D uPaper;
-uniform float uPaperScale, uK, uEvap, uDep, uGran, uLift, uSpread, uFront, uDryAll, uPush, uPD, uMaskStep, uEdge, uPushMin, uSpeck;
+uniform float uPaperScale, uK, uEvap, uDep, uGran, uLift, uSpread, uFront, uDryAll, uPush, uPD, uPDPool, uMaskStep, uEdge, uPushMin, uSpeck;
 layout(location=0) out vec4 oWP;
 layout(location=1) out vec4 oD;
 const float WET = 0.008;
@@ -451,8 +451,11 @@ void main(){
     if (bothWet) {
       vec3 cn = sn.rgb / Wn, cc = P / W;
       // Pigment also spreads through water that is not moving (feathering in wet-in-wet).
-      // It keeps moving while the paper is damp, which spreads the darker edge over a few cells.
-      dP += uPD * (cn - cc) * min(W, Wn) * smoothstep(0.08, 0.35, min(W, Wn));
+      // Between two pooled cells the pigment is in free water on the surface and spreads fast,
+      // which is what makes a blob of paint bleed into a clean wet area. In damp paper it
+      // keeps moving slowly, which spreads the darker edge over a few cells.
+      float pd = (cPool && nPool) ? uPDPool : uPD;
+      dP += pd * (cn - cc) * min(W, Wn) * smoothstep(0.08, 0.35, min(W, Wn));
       // Spread out single cells that hold far more pigment than a neighbour, wet or dried.
       // Without this, cells at a drying edge collect pigment one cell at a time and dry as dark specks.
       vec3 dif = sn.rgb - P;
@@ -527,9 +530,10 @@ void main(){
       float k = 0.45 * st.w;
       // Partly covered cells fill to a lower water level, which keeps thin lines anti-aliased.
       float dW = max(target * m - W, 0.0) * k + 0.012 * k * m;
-      // Clean water piles up on top of a wash instead of just topping it up. The excess is
-      // what drives a bloom outward.
-      if (uMode == 1) dW += 0.25 * target * k * m;
+      // The brush piles water on top of what is there instead of just topping it up. The
+      // excess is what drives a bloom outward, and a loaded paint brush brings a little more
+      // than a clean one, so a fresh blob flows out into a wet area and carries pigment with it.
+      dW += (uMode == 1 ? 0.25 : 0.35) * target * k * m;
       touched = max(touched, m);
       // Brush and wet paint exchange liquid. A clean brush lifts less than a loaded one trades.
       P += (Cb * W - P) * k * m * (uMode == 1 ? 0.015 : 0.06);
@@ -800,14 +804,20 @@ function stepSim() {
   gl.uniform1f(u.uDep, t.settle * evap);
   const edgeCells = Math.max(0.5, t.edgeWidth * sim.scale);
   gl.uniform1f(u.uMaskStep, 1 / edgeCells);
-  gl.uniform1f(u.uFront, t.front);
+  // The spread constants are per simulation cell. Scale them with the grid so a wash spreads
+  // the same distance on screen at any Detail setting. Medium is the reference. Diffusion
+  // scales with the square of the cell count per pixel, and is capped so the explicit step
+  // stays stable; the front creeps one cell at a time, so it scales linearly.
+  const rel = sim.scale / 0.75, rel2 = rel * rel;
+  gl.uniform1f(u.uFront, Math.min(t.front * rel, 0.3));
   gl.uniform1f(u.uEdge, t.edge);
   gl.uniform1f(u.uGran, t.gran);
   gl.uniform1f(u.uLift, t.lift);
   gl.uniform1f(u.uPush, t.push);
   gl.uniform1f(u.uPushMin, t.pushMin);
-  gl.uniform1f(u.uPD, t.pspread);
-  gl.uniform1f(u.uSpeck, t.speck);
+  gl.uniform1f(u.uPD, Math.min(t.pspread * rel2, 0.1));
+  gl.uniform1f(u.uPDPool, Math.min(t.pspread * 8 * rel2, 0.15));
+  gl.uniform1f(u.uSpeck, Math.min(t.speck * rel2, 0.15));
   gl.uniform1f(u.uDryAll, 0);
   drawTo(sim.next); swap();
 }
