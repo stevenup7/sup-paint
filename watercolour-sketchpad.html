@@ -546,7 +546,7 @@ void main(){
         // step at that speed, so a sloped edge moves as a whole instead of fading in place.
         // Both cells compute the same speed, so pigment is conserved. Capped per neighbour so
         // the explicit update stays stable.
-        float v = clamp(uBleed * ((cc.r + cc.g + cc.b) - (cn.r + cn.g + cn.b)), -0.1, 0.1);
+        float v = clamp(uBleed * ((cc.r + cc.g + cc.b) - (cn.r + cn.g + cn.b)), -0.04, 0.04);
         dP += v > 0.0 ? -v * P : -v * sn.rgb;
       }
       // Spread out single cells that hold far more pigment than a neighbour, wet or dried.
@@ -957,7 +957,7 @@ function stepSim() {
   // Speed scales with cells per pixel and the per-cell difference shrinks with it, so the
   // coefficient scales with the square.
   gl.uniform1f(u.uBleed, t.bleed * rel2);
-  gl.uniform1f(u.uSpeck, Math.min(t.speck * rel2, 0.1));
+  gl.uniform1f(u.uSpeck, Math.min(t.speck * rel2, 0.04));
   gl.uniform1f(u.uDryAll, 0);
   drawTo(sim.next); swap();
 }
