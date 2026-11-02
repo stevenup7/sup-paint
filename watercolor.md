@@ -368,7 +368,53 @@ Passes per step: flux update, then the existing step shader extended to read
   global set. The pigment table in 2.5 is a good starting point if we go that way.
 - KM rendering (opaque pigments) is independent of the fluid work and can wait.
 
-## 6. Open questions
+## 6. What happened when scheme B was built (2026-11-03, branch `flow-momentum`)
+
+Lessons from implementing and measuring it with scripted circle-and-blob tests
+(clean-water circle, paint blob on its edge, simulation stepped synchronously
+from script so the browser frame rate does not matter):
+
+1. **Explicit stability budget.** Every per-step lateral operator on pigment
+   (pipe advection, diffusion, speck smoothing, bleed) is a fraction of a cell's
+   content moved per neighbour per step. Their sum over four neighbours must stay
+   well under 1 or pigment grows without bound. The diffusion boost committed on
+   main earlier the same day (pool diffusion up to 0.15 per neighbour) broke this
+   and blows up to 1e38 within a simulated second. Current caps: pipe outflow
+   0.25 of water per cell, pool diffusion 0.03, damp diffusion 0.05, speck 0.1,
+   bleed 0.1 per neighbour.
+2. **Pipe model checkerboard.** With four neighbours the checkerboard mode feels
+   eight times the per-pipe gravity, so `g` must be far below 0.25 per step. At
+   0.32 the grid locked into a period-2 pattern with each cell swapping its whole
+   surplus with all four neighbours every step. Fixes: `g` capped at 0.1 (default
+   0.03 times grid factor) and opposing pipes through one wall cancel so only net
+   flow keeps momentum.
+3. **Momentum alone does not bleed.** A local water surplus spreads as a wave,
+   but the water parcels, and the pigment on them, move only a few cells. Curtis
+   gets away with it because one of his steps is about one of our seconds (a wash
+   dries in ~250 of his steps, ~10,000 of ours), so his 1% drag is enormous
+   momentum by our standards, and his brush adds a pressure kick of 1.0 against
+   pigment increments of 0.01 to 0.2.
+4. **Wet-in-wet bleeding is surface tension, not inertia.** Paint binder lowers
+   surface tension, so the surface flows from paint toward clean water
+   (Marangoni spreading). Modelled as a pigment velocity between pooled
+   neighbours proportional to the concentration difference, `v = k (c_c - c_n)`
+   capped at 0.1 cells per step, moving the sender's pigment. Two forms that do
+   not work: a concentration-dependent diffusion (still diffusion, square-root
+   of time, capped by the stability budget) and a speed scaled by the relative
+   difference (vanishes on any smooth ramp, and a brush edge is a ramp). The
+   plain gradient form with `k` about 0.2 per unit concentration at Ultra moves a
+   fresh blob's edge about 7 px in the first second, slowing as the edge softens.
+   `k` scales with the square of the grid factor.
+5. **Pipes feed the creep.** With water able to flow freely, the edge cells of a
+   wash are always full, so the old creep rate (tuned for a diffusion-starved
+   edge) doubled the wet area in 8 s. Creep default cut from 0.06 to 0.004.
+   Lowering the rim surface ("flow toward edge") made this worse and dragged
+   pigment outward, so it defaults to 0.
+6. **Browser pane caveat.** A hidden browser pane throttles requestAnimationFrame
+   to about 1 per second, so timed observations there are meaningless. Step the
+   simulation from script instead.
+
+## 7. Open questions
 
 - Van Laerhoven 2005 would tell us exactly how they cut Curtis down for the
   GPU (iteration counts, time step). Worth obtaining through a library if the

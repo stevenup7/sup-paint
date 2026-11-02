@@ -238,14 +238,26 @@ let dirty = true, lastWet = -1e9, finalDryDone = true;
 const TUNING = [
   { id: "sps", label: "Simulation steps per second", min: 120, max: 960, step: 60, def: 240,
     desc: "More steps move water and pigment further per second. Uses more GPU time. Above 16 steps per frame is capped." },
+  { id: "grav", label: "Flow speed", min: 0, max: 0.1, step: 0.002, def: 0.03,
+    desc: "How quickly pooled water picks up speed from a difference in level. Higher makes a fresh blob rush out into a wet area." },
+  { id: "damp", label: "Flow momentum", min: 0.9, max: 0.999, step: 0.001, def: 0.99,
+    desc: "How much of its speed moving water keeps each step. Higher keeps water moving after levels have evened out, which carries pigment further. At 240 steps a second 0.99 means a push lasts about half a second." },
+  { id: "visc", label: "Flow smoothing", min: 0, max: 0.5, step: 0.01, def: 0.2,
+    desc: "Pulls each cell's flow toward its neighbours' flow, like viscosity. Stops water sloshing cell to cell and keeps flow in broad streams." },
+  { id: "bleed", label: "Bleeding", min: 0, max: 0.1, step: 0.002, def: 0.05,
+    desc: "How fast concentrated paint flows out through pooled water. Strong paint moves fast and slows as it thins. Zero turns wet-in-wet bleeding off." },
+  { id: "slope", label: "Paper slope on flow", min: 0, max: 0.2, step: 0.005, def: 0.03,
+    desc: "How much the paper texture steers pooled water. Gives streaks that follow the paper." },
+  { id: "rim", label: "Flow toward edge", min: 0, max: 0.1, step: 0.005, def: 0,
+    desc: "Lowers the water surface toward the edge of a wet area so water and pigment run outward as it dries. Adds to edge darkening." },
   { id: "edge", label: "Edge drying", min: 0, max: 12, step: 0.5, def: 2,
     desc: "How much faster paint dries at its edge. Higher draws more water and pigment toward the edge." },
   { id: "edgeWidth", label: "Edge zone width (px)", min: 1, max: 40, step: 1, def: 6,
     desc: "How far in from the edge the faster drying reaches." },
   { id: "settle", label: "Pigment settling", min: 0, max: 3, step: 0.05, def: 1.2,
     desc: "How fast pigment sticks to the paper while wet, relative to drying speed. Higher keeps pigment where it was painted." },
-  { id: "front", label: "Spreading into dry paper", min: 0, max: 0.2, step: 0.005, def: 0.06,
-    desc: "How fast a wet area creeps outward over dry paper. Only water above the Flow setting's spread level moves." },
+  { id: "front", label: "Spreading into dry paper", min: 0, max: 0.05, step: 0.001, def: 0.004,
+    desc: "How fast a wet area creeps outward over dry paper. Only water above the Flow setting's spread level moves. Pooled water keeps the edge supplied, so small values already spread." },
   { id: "pspread", label: "Pigment spread in water", min: 0, max: 0.15, step: 0.005, def: 0.015,
     desc: "How fast pigment spreads through still damp paper. Pooled water on the surface spreads it eight times faster. Higher gives softer wet-in-wet edges but fills blooms back in." },
   { id: "push", label: "Pigment push", min: 0, max: 30, step: 1, def: 10,
@@ -371,11 +383,70 @@ let contextLost = false;
 const VS = `#version 300 es
 void main(){ vec2 p = vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position = vec4(p*2.0-1.0, 0.0, 1.0); }`;
 
+// Flow pass: pooled water on the surface moves through "pipes" between neighbouring cells.
+// Each cell keeps the amount it sends to each of its four neighbours (x: +x, y: -x, z: +y, w: -y).
+// A pipe speeds up with the difference in water surface height and slows by a damping factor,
+// so water keeps moving after the levels have evened out. That momentum is what carries
+// pigment quickly across a wet area (Mei et al. 2007 virtual pipes; Curtis et al. 1997 for the
+// shallow-water idea). Damp paper does not use pipes: it exchanges water slowly in the step pass.
+const FS_FLUX = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uWP; uniform sampler2D uD; uniform sampler2D uPaper; uniform sampler2D uF;
+uniform float uPaperScale, uSpread, uGrav, uDamp, uSlope, uRim, uMaxOut, uVisc;
+out vec4 oF;
+float paperAt(ivec2 c){ return texture(uPaper, (vec2(c)+0.5)*uPaperScale).r; }
+float comp(vec4 v, int i){ return i==0 ? v.x : i==1 ? v.y : i==2 ? v.z : v.w; }
+void main(){
+  ivec2 c = ivec2(gl_FragCoord.xy);
+  ivec2 sz = textureSize(uWP, 0);
+  float W = texelFetch(uWP, c, 0).a;
+  if (W <= uSpread) { oF = vec4(0.0); return; }
+  vec4 F = texelFetch(uF, c, 0);
+  // Surface height: water level, raised a little by the paper so flow streaks follow the
+  // texture, and lowered toward the edge of the wet area so water runs outward as it dries
+  // (edge darkening, as FlowOutward in Curtis).
+  float Hc = W + uSlope * paperAt(c) - uRim * (1.0 - texelFetch(uD, c, 0).a);
+  // Viscosity: a cell's pipes are pulled toward the average of its pooled neighbours' pipes.
+  // Without it, with low damping, neighbouring cells slosh water back and forth in a
+  // checkerboard instead of flowing together.
+  float dH[4]; bool ok[4]; float back[4];
+  vec4 avg = vec4(0.0); float cnt = 0.0;
+  for (int i = 0; i < 4; i++) {
+    ivec2 o = i==0 ? ivec2(1,0) : i==1 ? ivec2(-1,0) : i==2 ? ivec2(0,1) : ivec2(0,-1);
+    ivec2 n = c + o;
+    ok[i] = false; dH[i] = 0.0; back[i] = 0.0;
+    if (n.x < 0 || n.y < 0 || n.x >= sz.x || n.y >= sz.y) continue;
+    float Wn = texelFetch(uWP, n, 0).a;
+    if (Wn <= uSpread) continue;
+    ok[i] = true;
+    float Hn = Wn + uSlope * paperAt(n) - uRim * (1.0 - texelFetch(uD, n, 0).a);
+    dH[i] = Hc - Hn;
+    vec4 Fn = texelFetch(uF, n, 0);
+    avg += Fn; cnt += 1.0;
+    back[i] = comp(Fn, i ^ 1);   // what this neighbour sends back through the same wall
+  }
+  vec4 Fv = cnt > 0.0 ? mix(F, avg / cnt, uVisc) : F;
+  float f[4];
+  for (int i = 0; i < 4; i++) {
+    if (!ok[i]) { f[i] = 0.0; continue; }
+    // Opposing pipes through one wall cancel, so only the net flow keeps its momentum. Without
+    // this, neighbouring cells can slosh water back and forth every step (a checkerboard).
+    float fc = max(0.0, comp(Fv, i) - back[i]);
+    f[i] = max(0.0, fc * uDamp + uGrav * dH[i]);
+  }
+  // A cell never sends out more than a set share of its water in one step. This keeps water
+  // and pigment amounts from going negative and keeps the scheme stable.
+  float tot = f[0] + f[1] + f[2] + f[3];
+  float lim = uMaxOut * W;
+  if (tot > lim) { float k = lim / tot; f[0] *= k; f[1] *= k; f[2] *= k; f[3] *= k; }
+  oF = vec4(f[0], f[1], f[2], f[3]);
+}`;
+
 // One simulation step: water flow, pigment carried by the water, evaporation, deposition.
 const FS_STEP = `#version 300 es
 precision highp float; precision highp int;
-uniform sampler2D uWP; uniform sampler2D uD; uniform sampler2D uPaper;
-uniform float uPaperScale, uK, uEvap, uDep, uGran, uLift, uSpread, uFront, uDryAll, uPush, uPD, uPDPool, uMaskStep, uEdge, uPushMin, uSpeck;
+uniform sampler2D uWP; uniform sampler2D uD; uniform sampler2D uPaper; uniform sampler2D uF;
+uniform float uPaperScale, uK, uEvap, uDep, uGran, uLift, uSpread, uFront, uDryAll, uPush, uPD, uPDPool, uMaskStep, uEdge, uPushMin, uSpeck, uBleed;
 layout(location=0) out vec4 oWP;
 layout(location=1) out vec4 oD;
 const float WET = 0.008;
@@ -386,11 +457,13 @@ float paperAt(ivec2 c){ return texture(uPaper, (vec2(c)+0.5)*uPaperScale).r; }
 // front creeps outward with a ragged edge that follows the paper. Both cells of a pair
 // compute the same amount, so water is conserved.
 float front(float Ww, float hRecv){ return uFront * max(Ww - uSpread, 0.0) * (0.3 + 0.7 * (1.0 - hRecv)); }
+float comp(vec4 v, int i){ return i==0 ? v.x : i==1 ? v.y : i==2 ? v.z : v.w; }
 void main(){
   ivec2 c = ivec2(gl_FragCoord.xy);
   ivec2 sz = textureSize(uWP, 0);
   vec4 s = texelFetch(uWP, c, 0);
   vec4 dd = texelFetch(uD, c, 0);
+  vec4 Fc = texelFetch(uF, c, 0);
   vec3 P = s.rgb; float W = s.a; vec3 D = dd.rgb;
   if (uDryAll > 0.5) { oWP = vec4(0.0); oD = vec4(D + P, 0.0); return; }
   float h = paperAt(c);
@@ -415,10 +488,18 @@ void main(){
     bool cPool = W > uSpread, nPool = Wn > uSpread;
     float f = 0.0, Wrecv = 0.0;
     bool isFront = false;
-    if (cPool == nPool) {
-      // Two pooled cells, or two damp cells, exchange water by diffusion.
+    if (cPool && nPool) {
+      // Two pooled cells: water moves through the pipes computed in the flow pass. Both cells
+      // read the same two pipe values, so water and pigment are conserved. Pigment travels at
+      // the concentration of the cell it leaves (upwind advection, as MovePigment in Curtis).
+      float fout = comp(Fc, i);
+      float fin = comp(texelFetch(uF, n, 0), i ^ 1);
+      dW += fin - fout;
+      dP += fin * (sn.rgb / Wn) - fout * (P / W);
+    } else if (cPool == nPool) {
+      // Two damp cells exchange water slowly by diffusion through the paper.
       if (bothWet) {
-        float perm = uK * (0.2 + 0.6 * (h + hn)) * (cPool ? 1.0 : 0.25);
+        float perm = uK * (0.2 + 0.6 * (h + hn)) * 0.25;
         f = perm * (Wn - W) * (0.15 + 0.5 * (Wn + W));
       }
     } else if (nPool) {
@@ -456,6 +537,18 @@ void main(){
       // keeps moving slowly, which spreads the darker edge over a few cells.
       float pd = (cPool && nPool) ? uPDPool : uPD;
       dP += pd * (cn - cc) * min(W, Wn) * smoothstep(0.08, 0.35, min(W, Wn));
+      if (cPool && nPool) {
+        // Bleeding. Paint carries binder that lowers the surface tension of the water, so the
+        // surface flows from paint toward cleaner water and takes pigment with it (Marangoni
+        // spreading). The surface speed follows the concentration gradient, so a fresh blob
+        // with a sharp edge rushes out into a wet area and slows as its edge softens. This is
+        // a flow, not a diffusion: the stronger cell sends a share of its own pigment each
+        // step at that speed, so a sloped edge moves as a whole instead of fading in place.
+        // Both cells compute the same speed, so pigment is conserved. Capped per neighbour so
+        // the explicit update stays stable.
+        float v = clamp(uBleed * ((cc.r + cc.g + cc.b) - (cn.r + cn.g + cn.b)), -0.1, 0.1);
+        dP += v > 0.0 ? -v * P : -v * sn.rgb;
+      }
       // Spread out single cells that hold far more pigment than a neighbour, wet or dried.
       // Without this, cells at a drying edge collect pigment one cell at a time and dry as dark specks.
       vec3 dif = sn.rgb - P;
@@ -641,9 +734,9 @@ function compile(fs) {
   }
   return { p, u };
 }
-let progStep, progBrush, progCopy, progRender;
+let progStep, progBrush, progCopy, progRender, progFlux;
 try {
-  progStep = compile(FS_STEP); progBrush = compile(FS_BRUSH);
+  progStep = compile(FS_STEP); progBrush = compile(FS_BRUSH); progFlux = compile(FS_FLUX);
   progCopy = compile(FS_COPY); progRender = compile(FS_RENDER);
 } catch (e) { fail("Shader error: " + e.message); console.error(e); return; }
 
@@ -700,11 +793,12 @@ const paperTex = makePaper();
 // Linear filtering of float textures is optional in WebGL 2. The simulation reads cells
 // exactly with texelFetch, so filtering only affects the smooth drawing path.
 const floatLinear = !!gl.getExtension("OES_texture_float_linear");
-function makeTex(w, h) {
+function makeTex(w, h, half = false) {
   const t = gl.createTexture();
   const filt = floatLinear ? gl.LINEAR : gl.NEAREST;
   gl.bindTexture(gl.TEXTURE_2D, t);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
+  if (half) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+  else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filt);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filt);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -730,7 +824,20 @@ function deletePair(pair) {
   gl.deleteTexture(pair.wp); gl.deleteTexture(pair.d); gl.deleteFramebuffer(pair.fbo);
 }
 
-const sim = { scale: ui.detail, w: 0, h: 0, cur: null, next: null, undo: [] };
+const sim = { scale: ui.detail, w: 0, h: 0, cur: null, next: null, undo: [], flux: null, fluxNext: null };
+// The flow pass has its own pair of single textures (four pipe amounts per cell).
+function makeFlux(w, h) {
+  const t = makeTex(w, h, true), fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+  gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]);
+  return { t, fbo, w, h };
+}
+function clearFlux() {
+  for (const f of [sim.flux, sim.fluxNext]) { if (!f) continue; gl.bindFramebuffer(gl.FRAMEBUFFER, f.fbo); gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]); }
+}
+function deleteFlux(f) { gl.deleteTexture(f.t); gl.deleteFramebuffer(f.fbo); }
 // Each undo step stores two full-size float textures, so keep fewer at large grid sizes.
 const maxUndo = () => (sim.scale > 1.5 ? 1 : sim.scale > 1 ? 2 : 4);
 
@@ -743,6 +850,7 @@ function bindInputs(prog, src) {
   if (prog.u.uD) gl.uniform1i(prog.u.uD, 1);
   if (prog.u.uPaper) gl.uniform1i(prog.u.uPaper, 2);
   if (prog.u.uPaperScale) gl.uniform1f(prog.u.uPaperScale, 1 / (sim.scale * 1024));
+  if (prog.u.uF && sim.flux) { gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, sim.flux.t); gl.uniform1i(prog.u.uF, 3); }
 }
 function drawTo(dst) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fbo);
@@ -767,7 +875,10 @@ function resizeSim(cssW, cssH, scale) {
   if (sim.cur) {
     copyPair(sim.cur, a, sim.scale / scale);
     deletePair(sim.cur); deletePair(sim.next);
+    deleteFlux(sim.flux); deleteFlux(sim.fluxNext);
   }
+  // Pipes start empty at a new size; they refill within a few steps.
+  sim.flux = makeFlux(w, h); sim.fluxNext = makeFlux(w, h);
   sim.undo.forEach(deletePair); sim.undo = [];
   $("undo").disabled = true;
   sim.cur = a; sim.next = b; sim.w = w; sim.h = h; sim.scale = scale;
@@ -784,6 +895,7 @@ function undo() {
   const s = sim.undo.pop();
   if (!s) return;
   copyPair(s, sim.next, 1); swap();
+  clearFlux();
   deletePair(s);
   $("undo").disabled = sim.undo.length === 0;
   lastWet = performance.now(); dirty = true;
@@ -791,13 +903,37 @@ function undo() {
 
 // ---------- Simulation passes ----------
 function stepSim() {
+  const t = ui.t;
+  const rel = sim.scale / 0.75, rel2 = rel * rel;
+  const spread = 0.6 - 0.4 * ui.flow;
+  // Flow pass: update the pipes from the current water levels.
+  {
+    bindInputs(progFlux, sim.cur);
+    const u = progFlux.u;
+    gl.uniform1f(u.uSpread, spread);
+    // Pipe speed is in cells per step, so scale it with the grid to keep the same speed on screen.
+    // Kept well below the explicit scheme's limit: a cell has four neighbours, so the
+    // checkerboard mode feels eight times this value and must stay under 2.
+    gl.uniform1f(u.uGrav, Math.min(t.grav * rel, 0.1));
+    gl.uniform1f(u.uDamp, t.damp);
+    gl.uniform1f(u.uSlope, t.slope);
+    gl.uniform1f(u.uRim, t.rim);
+    gl.uniform1f(u.uVisc, t.visc);
+    // At most a quarter of a cell's water leaves per step. Together with the pigment diffusion
+    // and speck caps below this keeps the explicit update stable.
+    gl.uniform1f(u.uMaxOut, 0.25);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, sim.fluxNext.fbo);
+    gl.viewport(0, 0, sim.w, sim.h);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const f = sim.flux; sim.flux = sim.fluxNext; sim.fluxNext = f;
+  }
   bindInputs(progStep, sim.cur);
-  const u = progStep.u, t = ui.t;
+  const u = progStep.u;
   // A brush-width stroke dries in roughly the set time once edge drying and spreading are
   // counted. A large wash takes longer.
   const evap = 0.3 / (ui.drying * t.sps);
   gl.uniform1f(u.uK, 0.03 + 0.12 * ui.flow);
-  gl.uniform1f(u.uSpread, 0.6 - 0.4 * ui.flow);
+  gl.uniform1f(u.uSpread, spread);
   gl.uniform1f(u.uEvap, evap);
   // Pigment settling is relative to the drying rate, so the balance between pigment staining
   // in place and pigment moving to the edges stays the same at any drying time.
@@ -808,16 +944,20 @@ function stepSim() {
   // the same distance on screen at any Detail setting. Medium is the reference. Diffusion
   // scales with the square of the cell count per pixel, and is capped so the explicit step
   // stays stable; the front creeps one cell at a time, so it scales linearly.
-  const rel = sim.scale / 0.75, rel2 = rel * rel;
   gl.uniform1f(u.uFront, Math.min(t.front * rel, 0.3));
   gl.uniform1f(u.uEdge, t.edge);
   gl.uniform1f(u.uGran, t.gran);
   gl.uniform1f(u.uLift, t.lift);
   gl.uniform1f(u.uPush, t.push);
   gl.uniform1f(u.uPushMin, t.pushMin);
-  gl.uniform1f(u.uPD, Math.min(t.pspread * rel2, 0.1));
-  gl.uniform1f(u.uPDPool, Math.min(t.pspread * 8 * rel2, 0.15));
-  gl.uniform1f(u.uSpeck, Math.min(t.speck * rel2, 0.15));
+  gl.uniform1f(u.uPD, Math.min(t.pspread * rel2, 0.05));
+  // Pooled water moves pigment mainly by flow now, so it only gets a small diffusion boost.
+  gl.uniform1f(u.uPDPool, Math.min(t.pspread * 2 * rel2, 0.03));
+  // Bleed speed is cells per step per unit of concentration difference between neighbours.
+  // Speed scales with cells per pixel and the per-cell difference shrinks with it, so the
+  // coefficient scales with the square.
+  gl.uniform1f(u.uBleed, t.bleed * rel2);
+  gl.uniform1f(u.uSpeck, Math.min(t.speck * rel2, 0.1));
   gl.uniform1f(u.uDryAll, 0);
   drawTo(sim.next); swap();
 }
@@ -825,6 +965,7 @@ function dryAll() {
   bindInputs(progStep, sim.cur);
   gl.uniform1f(progStep.u.uDryAll, 1);
   drawTo(sim.next); swap();
+  clearFlux();
 }
 
 const stampBuf = new Float32Array(32 * 4);
