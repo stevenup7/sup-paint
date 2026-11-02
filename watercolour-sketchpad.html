@@ -1,0 +1,1034 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body{margin:0}</style>
+<title>Watercolour Sketchpad</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one-screen app. Tool bar on top, paper fills the rest, status line at the bottom. */
+:root {
+  --bar: #e7eae6;
+  --bar-2: #d9ddd8;
+  --ink: #1c2320;
+  --muted: #59635e;
+  --line: #c3c9c3;
+  --accent: #2b479c;
+  --accent-ink: #ffffff;
+  --stage: #b9beb8;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bar: #1b1f1d; --bar-2: #262b28; --ink: #e3e7e4; --muted: #9ba59f;
+    --line: #353d38; --accent: #93aaf0; --accent-ink: #0f1529; --stage: #0f1211;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bar: #1b1f1d; --bar-2: #262b28; --ink: #e3e7e4; --muted: #9ba59f;
+  --line: #353d38; --accent: #93aaf0; --accent-ink: #0f1529; --stage: #0f1211;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html { height: 100%; box-sizing: border-box; }
+*, *::before, *::after { box-sizing: inherit; }
+body { height: 100%; background: var(--bar); color: var(--ink); font-family: var(--sans); font-size: 14px; }
+.app { display: flex; flex-direction: column; height: 100%; }
+
+.bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+  padding-block: 8px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--line);
+  user-select: none; -webkit-user-select: none;
+}
+.group { display: flex; align-items: center; gap: 6px; }
+.label { font-size: 12px; color: var(--muted); letter-spacing: 0.02em; }
+
+.palette { gap: 5px; }
+.pan {
+  width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line);
+  padding: 0; cursor: pointer; background: var(--pan);
+  outline-offset: 2px;
+}
+.pan[aria-checked="true"] { outline: 2px solid var(--ink); }
+.pan:focus-visible { outline: 2px solid var(--accent); }
+#colourName { min-width: 9.5em; font-weight: 500; }
+
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button {
+  font: inherit; border: 0; background: transparent; color: var(--ink);
+  padding: 6px 11px; cursor: pointer; min-height: 32px;
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.slider { display: flex; align-items: center; gap: 7px; }
+.slider input { width: 92px; accent-color: var(--accent); }
+.slider output { font-family: var(--mono); font-size: 12px; min-width: 3.2em; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.actions { margin-left: auto; }
+.btn {
+  font: inherit; border: 1px solid var(--line); background: var(--bar-2); color: var(--ink);
+  border-radius: 6px; padding: 6px 12px; min-height: 32px; cursor: pointer;
+}
+.btn:hover { border-color: var(--muted); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+
+.stage { position: relative; flex: 1; min-height: 0; background: var(--stage); overflow: hidden; }
+#paper { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; display: block; }
+#ring {
+  position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 50%;
+  border: 1px solid rgba(20, 24, 22, 0.55); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+.tuning {
+  position: absolute; top: 12px; right: max(12px, env(safe-area-inset-right, 0px));
+  width: min(340px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow-y: auto;
+  background: var(--bar); color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); touch-action: auto;
+}
+.tune-head { display: flex; align-items: center; gap: 8px; }
+.tune-head strong { flex: 1; font-weight: 600; }
+.tune-rows { display: flex; flex-direction: column; gap: 12px; }
+.tune-row label { font-weight: 500; font-size: 13px; }
+.tune-ctl { display: flex; align-items: center; gap: 8px; }
+.tune-ctl input { flex: 1; min-width: 0; accent-color: var(--accent); }
+.tune-ctl output { font-family: var(--mono); font-size: 12px; min-width: 5.5em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tune-desc { margin: 2px 0 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.tuning textarea { font-family: var(--mono); font-size: 11px; width: 100%; resize: vertical; background: var(--bar-2); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 6px; }
+#msg {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 24px;
+  text-align: center; color: var(--ink); background: var(--stage); line-height: 1.5;
+}
+
+.status {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 20px;
+  padding-block: 6px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-top: 1px solid var(--line);
+  font-size: 12px; color: var(--muted); user-select: none; -webkit-user-select: none;
+}
+.status .stats { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.status kbd { font-family: var(--mono); font-size: 11px; }
+.more select { font: inherit; padding: 4px; border-radius: 4px; border: 1px solid var(--line); background: var(--bar-2); color: var(--ink); }
+.more label { display: flex; align-items: center; gap: 6px; }
+@media (max-width: 700px) {
+  .actions { margin-left: 0; }
+  .slider input { width: 84px; }
+}
+</style>
+
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="group palette" role="radiogroup" aria-label="Colour" id="palette"></div>
+    <span id="colourName">Ultramarine</span>
+
+    <div class="group">
+      <span class="label" id="toolLabel">Tool</span>
+      <div class="seg" role="group" aria-labelledby="toolLabel" id="modes">
+        <button type="button" id="modePaint" data-mode="0" aria-pressed="true">Paint</button>
+        <button type="button" id="modeWater" data-mode="1" aria-pressed="false">Clean water</button>
+        <button type="button" id="modeBlot" data-mode="2" aria-pressed="false">Blot</button>
+      </div>
+    </div>
+
+    <label class="slider"><span class="label">Size</span>
+      <input type="range" id="size" min="0" max="100" step="0.1" value="76.1"><output id="sizeOut">44 px</output></label>
+    <label class="slider"><span class="label">Water</span>
+      <input type="range" id="water" min="0" max="100" value="60"><output id="waterOut">60%</output></label>
+    <label class="slider"><span class="label">Paint</span>
+      <input type="range" id="pigment" min="5" max="100" value="55"><output id="pigmentOut">55%</output></label>
+    <label class="slider"><span class="label">Flow</span>
+      <input type="range" id="flow" min="0" max="100" value="90"><output id="flowOut">90%</output></label>
+    <label class="slider"><span class="label">Paper texture</span>
+      <input type="range" id="texture" min="0" max="100" value="40"><output id="textureOut">40%</output></label>
+    <label class="slider"><span class="label">Drying time</span>
+      <input type="range" id="drying" min="4" max="180" value="45"><output id="dryingOut">45 s</output></label>
+
+    <div class="group more">
+      <label><span class="label">Detail</span>
+        <select id="detail">
+          <option value="0.5">Low</option>
+          <option value="0.75">Medium</option>
+          <option value="1">High</option>
+          <option value="1.5">Very high</option>
+          <option value="2" selected>Ultra</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="runsDry" checked><span class="label">Brush runs dry (lift pen to reload)</span></label>
+    </div>
+
+    <div class="group actions">
+      <button type="button" class="btn" id="tuneOpen">Simulation settings</button>
+      <button type="button" class="btn" id="undo" disabled>Undo</button>
+      <button type="button" class="btn" id="dryNow">Dry now</button>
+      <button type="button" class="btn" id="clear">Clear</button>
+    </div>
+  </header>
+
+  <main class="stage" id="stage">
+    <canvas id="paper"></canvas>
+    <div id="ring" hidden></div>
+    <div id="msg" hidden></div>
+    <aside class="tuning" id="tuning" hidden aria-label="Simulation settings">
+      <div class="tune-head">
+        <strong>Simulation settings</strong>
+        <button type="button" class="btn" id="tuneReset">Reset</button>
+        <button type="button" class="btn" id="tuneClose">Close</button>
+      </div>
+      <div id="tuneRows" class="tune-rows"></div>
+      <label class="label" for="tuneText">Current values</label>
+      <textarea id="tuneText" rows="6" readonly></textarea>
+      <button type="button" class="btn" id="tuneCopy">Copy values</button>
+    </aside>
+  </main>
+
+  <footer class="status">
+    <span>Pen tip: selected tool · Barrel button: clean water · Eraser end: blot · <kbd>Ctrl+Z</kbd> undo · <kbd>[</kbd> <kbd>]</kbd> size · Finger touch does not paint</span>
+    <span class="stats" id="stats">–</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+// ---------- Pigments ----------
+// rgb = colour of a full-strength layer on white paper. Absorbance K = -ln(rgb).
+const PIGMENTS = [
+  { name: "Hansa yellow",      rgb: [0.98, 0.84, 0.18] },
+  { name: "Yellow ochre",      rgb: [0.85, 0.63, 0.31] },
+  { name: "Cadmium red",       rgb: [0.86, 0.22, 0.14] },
+  { name: "Quinacridone rose", rgb: [0.84, 0.21, 0.47] },
+  { name: "Burnt sienna",      rgb: [0.62, 0.31, 0.17] },
+  { name: "Sap green",         rgb: [0.37, 0.51, 0.17] },
+  { name: "Phthalo blue",      rgb: [0.06, 0.31, 0.56] },
+  { name: "Ultramarine",       rgb: [0.21, 0.25, 0.66] },
+  { name: "Payne's grey",      rgb: [0.25, 0.28, 0.33] },
+];
+PIGMENTS.forEach(p => { p.K = p.rgb.map(c => -Math.log(Math.max(c, 0.02))); });
+const PAPER_RGB = [0.972, 0.962, 0.935];
+// Absorbance saturates at this value in the renderer and the palette swatches.
+const KMAX = 4.5;
+
+// ---------- UI state ----------
+const ui = {
+  colour: 7, mode: 0,
+  size: 44, water: 0.6, pigment: 0.55, drying: 45, flow: 0.9, paper: 0.4,
+  detail: 2, runsDry: true,
+};
+const $ = id => document.getElementById(id);
+// Frame-loop state. dirty: the canvas needs drawing. lastWet: when paint was last applied.
+let dirty = true, lastWet = -1e9, finalDryDone = true;
+
+// ---------- Simulation settings panel ----------
+const TUNING = [
+  { id: "sps", label: "Simulation steps per second", min: 120, max: 960, step: 60, def: 240,
+    desc: "More steps move water and pigment further per second. Uses more GPU time. Above 16 steps per frame is capped." },
+  { id: "edge", label: "Edge drying", min: 0, max: 12, step: 0.5, def: 2,
+    desc: "How much faster paint dries at its edge. Higher draws more water and pigment toward the edge." },
+  { id: "edgeWidth", label: "Edge zone width (px)", min: 1, max: 40, step: 1, def: 6,
+    desc: "How far in from the edge the faster drying reaches." },
+  { id: "settle", label: "Pigment settling", min: 0, max: 3, step: 0.05, def: 1.2,
+    desc: "How fast pigment sticks to the paper while wet, relative to drying speed. Higher keeps pigment where it was painted." },
+  { id: "front", label: "Spreading into dry paper", min: 0, max: 0.2, step: 0.005, def: 0.06,
+    desc: "How fast a wet area creeps outward over dry paper. Only water above the Flow setting's spread level moves." },
+  { id: "pspread", label: "Pigment spread in water", min: 0, max: 0.15, step: 0.005, def: 0.015,
+    desc: "How fast pigment spreads through still water. Higher gives softer wet-in-wet edges but fills blooms back in." },
+  { id: "push", label: "Pigment push", min: 0, max: 30, step: 1, def: 10,
+    desc: "How strongly a sudden rush of water pushes pigment ahead of it. Makes blooms." },
+  { id: "pushMin", label: "Push threshold", min: 0, max: 0.3, step: 0.01, def: 0.12,
+    desc: "Difference in water between neighbouring cells before push starts." },
+  { id: "speck", label: "Speck smoothing", min: 0, max: 0.2, step: 0.01, def: 0.06,
+    desc: "Spreads out single cells that hold much more pigment than a neighbour." },
+  { id: "gran", label: "Granulation", min: 0, max: 1, step: 0.05, def: 0.6,
+    desc: "How much more pigment settles in the low points of the paper." },
+  { id: "lift", label: "Lifting", min: 0, max: 0.0005, step: 0.00001, def: 0.00004,
+    desc: "How fast wet paper dissolves dried paint underneath it." },
+];
+const TUNING_KEY = "wc-tuning-v2";
+ui.t = Object.fromEntries(TUNING.map(d => [d.id, d.def]));
+
+const paletteEl = $("palette");
+PIGMENTS.forEach((p, i) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "pan"; b.setAttribute("role", "radio");
+  b.setAttribute("aria-label", p.name); b.title = p.name;
+  const c = p.K.map((k, j) => Math.round(255 * PAPER_RGB[j] * Math.exp(-KMAX * (1 - Math.exp(-k * 0.85 / KMAX)))));
+  b.style.setProperty("--pan", `rgb(${c[0]},${c[1]},${c[2]})`);
+  b.setAttribute("aria-checked", i === ui.colour ? "true" : "false");
+  b.addEventListener("click", () => selectColour(i));
+  paletteEl.appendChild(b);
+});
+function selectColour(i) {
+  ui.colour = i;
+  [...paletteEl.children].forEach((b, j) => b.setAttribute("aria-checked", j === i ? "true" : "false"));
+  $("colourName").textContent = PIGMENTS[i].name;
+  if (ui.mode !== 0) setMode(0);
+}
+function setMode(m) {
+  ui.mode = m;
+  document.querySelectorAll("#modes button").forEach(b =>
+    b.setAttribute("aria-pressed", Number(b.dataset.mode) === m ? "true" : "false"));
+}
+document.querySelectorAll("#modes button").forEach(b =>
+  b.addEventListener("click", () => setMode(Number(b.dataset.mode))));
+
+function bindSlider(id, fmt, apply) {
+  const el = $(id), out = $(id + "Out");
+  const upd = () => { apply(Number(el.value)); out.textContent = fmt(Number(el.value)); };
+  el.addEventListener("input", upd); upd();
+  return el;
+}
+// Size slider is logarithmic: 0.5 px to 180 px brush width.
+const sizeFromSlider = v => 0.5 * Math.pow(360, v / 100);
+const fmtSize = d => (d < 10 ? d.toFixed(1) : Math.round(d)) + " px";
+const sizeEl = bindSlider("size", v => fmtSize(sizeFromSlider(v)), v => { ui.size = sizeFromSlider(v); });
+bindSlider("water", v => v + "%", v => { ui.water = v / 100; });
+bindSlider("pigment", v => v + "%", v => { ui.pigment = v / 100; });
+bindSlider("drying", v => v + " s", v => { ui.drying = v; });
+bindSlider("flow", v => v + "%", v => { ui.flow = v / 100; });
+bindSlider("texture", v => v + "%", v => { ui.paper = v / 100; dirty = true; });
+$("runsDry").addEventListener("change", e => { ui.runsDry = e.target.checked; });
+
+try {
+  const saved = JSON.parse(localStorage.getItem(TUNING_KEY) || "{}");
+  for (const d of TUNING) if (typeof saved[d.id] === "number") ui.t[d.id] = saved[d.id];
+} catch (e) {}
+const decimals = st => (String(st).split(".")[1] || "").length;
+const tuneRows = $("tuneRows"), tuneText = $("tuneText");
+function tuneSummary() {
+  return TUNING.map(d => `${d.label}: ${ui.t[d.id].toFixed(decimals(d.step))}`).join("\n")
+    + `\nFlow: ${Math.round(ui.flow * 100)}%, Water: ${Math.round(ui.water * 100)}%, Paint: ${Math.round(ui.pigment * 100)}%`
+    + `, Drying time: ${ui.drying} s, Size: ${fmtSize(ui.size)}, Detail: ${$("detail").selectedOptions[0].textContent}`;
+}
+function tuneShow() { tuneText.value = tuneSummary(); }
+// Saved only when the user changes a value, so new defaults are not pinned by an old save.
+function tuneSave() {
+  tuneShow();
+  try { localStorage.setItem(TUNING_KEY, JSON.stringify(ui.t)); } catch (e) {}
+}
+for (const d of TUNING) {
+  const row = document.createElement("div");
+  row.className = "tune-row";
+  const inputId = "tune-" + d.id;
+  row.innerHTML = `<label for="${inputId}">${d.label}</label>
+    <div class="tune-ctl"><input type="range" id="${inputId}" min="${d.min}" max="${d.max}" step="${d.step}">
+    <output></output></div><p class="tune-desc">${d.desc}</p>`;
+  const input = row.querySelector("input"), out = row.querySelector("output");
+  input.value = ui.t[d.id];
+  const show = () => { out.textContent = ui.t[d.id].toFixed(decimals(d.step)); };
+  input.addEventListener("input", () => { ui.t[d.id] = Number(input.value); show(); tuneSave(); });
+  show();
+  d.input = input; d.show = show;
+  tuneRows.appendChild(row);
+}
+$("tuneOpen").addEventListener("click", () => { $("tuning").hidden = !$("tuning").hidden; tuneShow(); });
+$("tuneClose").addEventListener("click", () => { $("tuning").hidden = true; });
+$("tuneReset").addEventListener("click", () => {
+  for (const d of TUNING) { ui.t[d.id] = d.def; d.input.value = d.def; d.show(); }
+  tuneSave();
+});
+$("tuneCopy").addEventListener("click", () => {
+  tuneShow();
+  const done = () => { $("tuneCopy").textContent = "Copied"; setTimeout(() => { $("tuneCopy").textContent = "Copy values"; }, 1500); };
+  const fallback = () => { tuneText.focus(); tuneText.select(); $("tuneCopy").textContent = "Selected, press Ctrl+C"; };
+  try { navigator.clipboard.writeText(tuneText.value).then(done, fallback); } catch (e) { fallback(); }
+});
+tuneShow();
+
+// ---------- WebGL setup ----------
+const canvas = $("paper");
+const stage = $("stage");
+const msg = $("msg");
+function fail(text) { msg.textContent = text; msg.hidden = false; }
+
+const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, desynchronized: true, preserveDrawingBuffer: false });
+if (!gl) { fail("This browser did not provide WebGL 2, which the simulation needs. Try Edge or Chrome with hardware acceleration turned on."); return; }
+if (!gl.getExtension("EXT_color_buffer_float")) { fail("This browser cannot render to floating-point textures (EXT_color_buffer_float), which the simulation needs."); return; }
+// The GPU can drop the context (driver reset, the tab left in the background too long, a very
+// large grid). The painting is gone with it, so say so instead of showing a black canvas.
+canvas.addEventListener("webglcontextlost", e => {
+  e.preventDefault();
+  contextLost = true;
+  fail("The graphics context was lost, so the painting could not be kept. Reload the page to start again.");
+});
+let contextLost = false;
+
+const VS = `#version 300 es
+void main(){ vec2 p = vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position = vec4(p*2.0-1.0, 0.0, 1.0); }`;
+
+// One simulation step: water flow, pigment carried by the water, evaporation, deposition.
+const FS_STEP = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uWP; uniform sampler2D uD; uniform sampler2D uPaper;
+uniform float uPaperScale, uK, uEvap, uDep, uGran, uLift, uSpread, uFront, uDryAll, uPush, uPD, uMaskStep, uEdge, uPushMin, uSpeck;
+layout(location=0) out vec4 oWP;
+layout(location=1) out vec4 oD;
+const float WET = 0.008;
+const float DRY = 0.004;
+float paperAt(ivec2 c){ return texture(uPaper, (vec2(c)+0.5)*uPaperScale).r; }
+// Water that a wet cell at level Ww hands to a dry neighbour whose paper height is hRecv.
+// Only water above the spread level moves, and hollows in the paper take it first, so the
+// front creeps outward with a ragged edge that follows the paper. Both cells of a pair
+// compute the same amount, so water is conserved.
+float front(float Ww, float hRecv){ return uFront * max(Ww - uSpread, 0.0) * (0.3 + 0.7 * (1.0 - hRecv)); }
+void main(){
+  ivec2 c = ivec2(gl_FragCoord.xy);
+  ivec2 sz = textureSize(uWP, 0);
+  vec4 s = texelFetch(uWP, c, 0);
+  vec4 dd = texelFetch(uD, c, 0);
+  vec3 P = s.rgb; float W = s.a; vec3 D = dd.rgb;
+  if (uDryAll > 0.5) { oWP = vec4(0.0); oD = vec4(D + P, 0.0); return; }
+  float h = paperAt(c);
+  bool cWet = W > WET;
+  float dW = 0.0; vec3 dP = vec3(0.0); vec3 dD = vec3(0.0);
+  // D.a holds how far inside the wet area this cell is: 0 at the edge, rising to 1 one
+  // edge-zone width in. It is a distance field relaxed one step at a time: each wet cell
+  // sits a little above its neighbours, each dry cell is 0.
+  float Mmin = 1.0, Msum = 0.0;
+  for (int i = 0; i < 4; i++) {
+    ivec2 o = i==0 ? ivec2(1,0) : i==1 ? ivec2(-1,0) : i==2 ? ivec2(0,1) : ivec2(0,-1);
+    ivec2 n = c + o;
+    if (n.x < 0 || n.y < 0 || n.x >= sz.x || n.y >= sz.y) { Mmin = min(Mmin, dd.a); Msum += dd.a; continue; }
+    vec4 dn = texelFetch(uD, n, 0);
+    Mmin = min(Mmin, dn.a); Msum += dn.a;
+    vec4 sn = texelFetch(uWP, n, 0);
+    float Wn = sn.a; bool nWet = Wn > WET;
+    float hn = paperAt(n);
+    bool bothWet = cWet && nWet;
+    // Water above the spread level is a free pool on the surface. Below it the water is held
+    // in the paper (damp), where it moves slowly and cannot spread on its own.
+    bool cPool = W > uSpread, nPool = Wn > uSpread;
+    float f = 0.0, Wrecv = 0.0;
+    bool isFront = false;
+    if (cPool == nPool) {
+      // Two pooled cells, or two damp cells, exchange water by diffusion.
+      if (bothWet) {
+        float perm = uK * (0.2 + 0.6 * (h + hn)) * (cPool ? 1.0 : 0.25);
+        f = perm * (Wn - W) * (0.15 + 0.5 * (Wn + W));
+      }
+    } else if (nPool) {
+      // A pool next to damp or dry paper advances into it as a front, which keeps its edge
+      // sharp instead of fading out by diffusion.
+      f = front(Wn, h); Wrecv = W; isFront = true;
+    } else {
+      f = -front(W, hn); Wrecv = Wn; isFront = true;
+    }
+    dW += f;
+    if (f != 0.0) {
+      // Pigment travels with the water.
+      vec3 Pup = f > 0.0 ? sn.rgb : P;
+      float Wup = f > 0.0 ? Wn : W;
+      vec3 conc = Pup / max(Wup, 1e-5);
+      float carry;
+      if (isFront) {
+        // Paper filters pigment as water wicks into dry paper, so the first water into a cell
+        // carries little pigment and the pigment follows once the cell is wetted. A front running
+        // over damp paper instead pushes pigment ahead of itself, which makes blooms.
+        float wetted = smoothstep(0.0, 0.5 * uSpread, Wrecv);
+        carry = mix(0.35, 1.0, wetted) + 0.15 * uPush * smoothstep(0.0, uSpread, Wrecv);
+      } else {
+        // Between two pooled cells a steep water difference also pushes pigment ahead of the water.
+        carry = 1.0 + uPush * max(abs(Wn - W) - uPushMin, 0.0) * smoothstep(0.35, 0.7, Wup);
+      }
+      vec3 pf = f * conc * carry;
+      dP += sign(pf) * min(abs(pf), 0.2 * Pup);
+    }
+    if (bothWet) {
+      vec3 cn = sn.rgb / Wn, cc = P / W;
+      // Pigment also spreads through water that is not moving (feathering in wet-in-wet).
+      // It keeps moving while the paper is damp, which spreads the darker edge over a few cells.
+      dP += uPD * (cn - cc) * min(W, Wn) * smoothstep(0.08, 0.35, min(W, Wn));
+      // Spread out single cells that hold far more pigment than a neighbour, wet or dried.
+      // Without this, cells at a drying edge collect pigment one cell at a time and dry as dark specks.
+      vec3 dif = sn.rgb - P;
+      vec3 ratio = abs(dif) / (sn.rgb + P + 1e-4);
+      dP += uSpeck * dif * smoothstep(0.25, 0.8, ratio);
+      vec3 ddif = dn.rgb - D;
+      vec3 dratio = abs(ddif) / (dn.rgb + D + 1e-4);
+      dD += 0.5 * uSpeck * ddif * smoothstep(0.5, 0.9, dratio);
+    }
+  }
+  float edge = 1.0 - dd.a;   // 0 deep inside the wet area, 1 at its edge
+  W += dW;
+  P = max(P + dP, 0.0);
+  D = max(D + dD, 0.0);
+  // Cells near the edge of a wet area lose water faster. Water flows out from the middle to
+  // replace it and carries pigment with it, so edges dry darker and the middle lighter.
+  W = max(W - uEvap * (1.0 + uEdge * edge), 0.0);
+  float valley = 1.0 - h;
+  float dep = uDep * (1.0 + 3.0 * clamp(1.0 - W * 2.0, 0.0, 1.0)) * mix(1.0, 0.3 + 1.4 * valley, uGran);
+  vec3 depV = P * clamp(dep, 0.0, 1.0);
+  vec3 lift = D * uLift * smoothstep(0.15, 0.6, W);
+  // A cell with too little water left dries out, unless water is still arriving: a cell at the
+  // front must be allowed to fill up, or it would swallow every trickle and dry it as a dark rim.
+  if (W < DRY && dW <= 0.0) { depV = P; lift = vec3(0.0); W = 0.0; }
+  P = P - depV + lift;
+  D = D + depV - lift;
+  float Mnew = W > WET ? min(1.0, 0.5 * (Mmin + 0.25 * Msum) + uMaskStep) : 0.0;
+  oWP = vec4(P, min(W, 1.0));
+  oD = vec4(D, Mnew);
+}`;
+
+// Brush: add water and pigment (paint), water only (clean water), or remove them (blot).
+const FS_BRUSH = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uWP; uniform sampler2D uD; uniform sampler2D uPaper;
+uniform float uPaperScale;
+uniform vec4 uStamps[32];
+uniform int uCount; uniform int uMode;
+uniform vec3 uColK; uniform float uWater, uPigment;
+uniform float uLoad;    // water left on the brush: 1 = full, falls toward 0 along a stroke
+uniform float uPigLoad; // pigment left on the brush: 1 = full, falls toward 0 along a stroke
+layout(location=0) out vec4 oWP;
+layout(location=1) out vec4 oD;
+void main(){
+  ivec2 c = ivec2(gl_FragCoord.xy);
+  vec2 pos = vec2(c) + 0.5;
+  vec4 s = texelFetch(uWP, c, 0); vec4 dd = texelFetch(uD, c, 0);
+  float W = s.a; vec3 P = s.rgb; vec3 D = dd.rgb;
+  float h = texture(uPaper, pos * uPaperScale).r;
+  float touched = 0.0;
+  float dryMask = 1.0;
+  if (uMode <= 1 && uWater * uLoad < 0.3) {
+    float t = (1.0 - uWater * uLoad / 0.3) * 0.72;
+    dryMask = smoothstep(t - 0.06, t + 0.06, h);
+  }
+  // Paint and clean water use the same water model. Clean water is paint with no pigment.
+  // As the brush runs dry it leaves less water, so paint ends in a dry-brush stroke.
+  float target = 0.02 + 0.93 * uWater * uLoad;
+  // Pigment per unit of water in the brush. Less water means more concentrated paint.
+  vec3 Cb = uMode == 1 ? vec3(0.0) : uColK * uPigment * uPigLoad * 0.9 / (0.02 + 0.93 * uWater);
+  for (int i = 0; i < 32; i++) {
+    if (i >= uCount) break;
+    vec4 st = uStamps[i];
+    float d = distance(pos, st.xy);
+    // g = how much of this cell the brush covers: 1 inside, 0 outside, and a one-cell
+    // ramp at the edge so the edge is crisp but not stepped.
+    float g = clamp(st.z - d + 0.5, 0.0, 1.0);
+    if (g <= 0.0) continue;
+    float cov = g * st.w;
+    if (uMode <= 1) {
+      float m = g * dryMask;
+      float k = 0.45 * st.w;
+      // Partly covered cells fill to a lower water level, which keeps thin lines anti-aliased.
+      float dW = max(target * m - W, 0.0) * k + 0.012 * k * m;
+      // Clean water piles up on top of a wash instead of just topping it up. The excess is
+      // what drives a bloom outward.
+      if (uMode == 1) dW += 0.25 * target * k * m;
+      touched = max(touched, m);
+      // Brush and wet paint exchange liquid. A clean brush lifts less than a loaded one trades.
+      P += (Cb * W - P) * k * m * (uMode == 1 ? 0.015 : 0.06);
+      P += Cb * dW;
+      // A brush touching wet paper also releases pigment into the water already there.
+      P += Cb * target * k * m * 0.18 * smoothstep(0.1, 0.5, W);
+      W += dW;
+    } else {
+      float k = cov * 0.35;
+      W *= 1.0 - k; P *= 1.0 - k * 0.9; D *= 1.0 - cov * 0.02;
+    }
+  }
+  oWP = vec4(P, min(W, 1.0));
+  // A cell the brush has just wetted starts fully inside the wet area, so it does not dry
+  // at the edge rate while the distance field catches up over the next few steps.
+  oD = vec4(D, touched > 0.0 && W > 0.008 ? 1.0 : dd.a);
+}`;
+
+// Copy state into a grid of another size. Positions map through screen position, top-left anchored.
+const FS_COPY = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uWP; uniform sampler2D uD; uniform float uRatio;
+layout(location=0) out vec4 oWP;
+layout(location=1) out vec4 oD;
+void main(){
+  ivec2 c = ivec2(gl_FragCoord.xy);
+  ivec2 o = ivec2(floor((vec2(c) + 0.5) * uRatio));
+  ivec2 sz = textureSize(uWP, 0);
+  if (o.x >= sz.x || o.y >= sz.y) { oWP = vec4(0.0); oD = vec4(0.0); return; }
+  oWP = texelFetch(uWP, o, 0); oD = texelFetch(uD, o, 0);
+}`;
+
+// Draw: paper texture with light from the top left, pigment by Beer-Lambert absorbance.
+const FS_RENDER = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uWP; uniform sampler2D uD; uniform sampler2D uPaper;
+uniform float uDpr, uSimScale, uCanvasH, uSmooth, uPaperStrength;
+uniform vec3 uPaperRGB;
+out vec4 o;
+const float KMAX = 4.5;
+vec4 bilerp(sampler2D t, vec2 p){
+  vec2 q = p - 0.5; vec2 f = fract(q); ivec2 i = ivec2(floor(q));
+  ivec2 m = textureSize(t, 0) - 1;
+  vec4 a = texelFetch(t, clamp(i, ivec2(0), m), 0);
+  vec4 b = texelFetch(t, clamp(i + ivec2(1,0), ivec2(0), m), 0);
+  vec4 c = texelFetch(t, clamp(i + ivec2(0,1), ivec2(0), m), 0);
+  vec4 d = texelFetch(t, clamp(i + ivec2(1,1), ivec2(0), m), 0);
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+// Cubic B-spline sampling from 4 hardware-filtered taps. Removes the stair steps that
+// bilinear sampling shows where a coarse grid cell changes from paint to bare paper.
+vec4 bspline(sampler2D t, vec2 p){
+  vec2 sz = vec2(textureSize(t, 0));
+  vec2 tc = p - 0.5; vec2 i = floor(tc); vec2 f = tc - i;
+  vec2 f2 = f * f, f3 = f2 * f;
+  vec2 w0 = (1.0 - 3.0*f + 3.0*f2 - f3) / 6.0;
+  vec2 w1 = (4.0 - 6.0*f2 + 3.0*f3) / 6.0;
+  vec2 w2 = (1.0 + 3.0*f + 3.0*f2 - 3.0*f3) / 6.0;
+  vec2 w3 = f3 / 6.0;
+  vec2 g0 = w0 + w1, g1 = w2 + w3;
+  vec2 h0 = (i - 0.5 + w1 / g0) / sz;
+  vec2 h1 = (i + 1.5 + w3 / g1) / sz;
+  return g0.y * (g0.x * texture(t, vec2(h0.x, h0.y)) + g1.x * texture(t, vec2(h1.x, h0.y)))
+       + g1.y * (g0.x * texture(t, vec2(h0.x, h1.y)) + g1.x * texture(t, vec2(h1.x, h1.y)));
+}
+void main(){
+  vec2 css = vec2(gl_FragCoord.x, uCanvasH - gl_FragCoord.y) / uDpr;
+  vec2 sp = css * uSimScale;
+  vec4 s = uSmooth > 0.5 ? bspline(uWP, sp) : bilerp(uWP, sp);
+  vec4 d = uSmooth > 0.5 ? bspline(uD, sp) : bilerp(uD, sp);
+  vec2 puv = css / 1024.0;
+  float px = 1.0 / 1024.0;
+  float h = texture(uPaper, puv).r;
+  float hl = texture(uPaper, puv - vec2(px, 0.0)).r;
+  float hu = texture(uPaper, puv - vec2(0.0, px)).r;
+  float shade = 1.0 + ((h - hl) * 0.6 + (h - hu) * 0.6) * uPaperStrength;
+  vec3 paper = uPaperRGB * (1.0 - 0.02 * uPaperStrength + 0.02 * uPaperStrength * h) * shade;
+  vec3 K = d.rgb * (1.0 + 0.45 * uPaperStrength * (0.5 - h)) + s.rgb;
+  // Pigment saturates: a pile of it goes very dark, never black. This also hides any
+  // single cell that collected far more pigment than its neighbours.
+  K = KMAX * (1.0 - exp(-K / KMAX));
+  vec3 col = paper * exp(-K);
+  float wet = smoothstep(0.0, 0.35, s.a);
+  col *= 1.0 - 0.07 * wet;
+  col += wet * 0.05 * max(0.0, (h - hl) * 5.0);
+  o = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`;
+
+function compile(fs) {
+  const p = gl.createProgram();
+  for (const [type, src] of [[gl.VERTEX_SHADER, VS], [gl.FRAGMENT_SHADER, fs]]) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src); gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+    gl.attachShader(p, sh);
+  }
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const u = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) {
+    const info = gl.getActiveUniform(p, i);
+    const name = info.name.replace(/\[0\]$/, "");
+    u[name] = gl.getUniformLocation(p, info.name);
+  }
+  return { p, u };
+}
+let progStep, progBrush, progCopy, progRender;
+try {
+  progStep = compile(FS_STEP); progBrush = compile(FS_BRUSH);
+  progCopy = compile(FS_COPY); progRender = compile(FS_RENDER);
+} catch (e) { fail("Shader error: " + e.message); console.error(e); return; }
+
+gl.bindVertexArray(gl.createVertexArray());
+
+// ---------- Paper texture (tileable value noise, 1 texel = 1 CSS px) ----------
+function makePaper() {
+  const N = 1024, out = new Float32Array(N * N);
+  let seed = 1234567;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const octaves = [[256, 0.22], [128, 0.34], [64, 0.24], [32, 0.1], [16, 0.1]];
+  for (const [cells, amp] of octaves) {
+    const g = new Float32Array(cells * cells);
+    for (let i = 0; i < g.length; i++) g[i] = rnd();
+    const step = N / cells;
+    for (let y = 0; y < N; y++) {
+      const gy = y / step, y0 = Math.floor(gy), fy = gy - y0, sy = fy * fy * (3 - 2 * fy);
+      const r0 = (y0 % cells) * cells, r1 = ((y0 + 1) % cells) * cells;
+      for (let x = 0; x < N; x++) {
+        const gx = x / step, x0 = Math.floor(gx), fx = gx - x0, sx = fx * fx * (3 - 2 * fx);
+        const c0 = x0 % cells, c1 = (x0 + 1) % cells;
+        const a = g[r0 + c0] + (g[r0 + c1] - g[r0 + c0]) * sx;
+        const b = g[r1 + c0] + (g[r1 + c1] - g[r1 + c0]) * sx;
+        out[y * N + x] += amp * (a + (b - a) * sy);
+      }
+    }
+  }
+  // Blur with a wrapped [1 2 1] kernel, twice in each direction, to remove texel-sized steps.
+  const tmp = new Float32Array(N * N);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++)
+      tmp[y * N + x] = (out[y * N + ((x + N - 1) % N)] + 2 * out[y * N + x] + out[y * N + ((x + 1) % N)]) / 4;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++)
+      out[y * N + x] = (tmp[((y + N - 1) % N) * N + x] + 2 * tmp[y * N + x] + tmp[((y + 1) % N) * N + x]) / 4;
+  }
+  let lo = Infinity, hi = -Infinity;
+  for (const v of out) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const bytes = new Uint8Array(N * N);
+  for (let i = 0; i < out.length; i++) bytes[i] = Math.round(255 * (out[i] - lo) / (hi - lo));
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, N, N, 0, gl.RED, gl.UNSIGNED_BYTE, bytes);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  return t;
+}
+const paperTex = makePaper();
+
+// ---------- Simulation state ----------
+// A "pair" holds two float textures: WP (rgb = wet pigment, a = water) and D (rgb = dried pigment).
+// Linear filtering of float textures is optional in WebGL 2. The simulation reads cells
+// exactly with texelFetch, so filtering only affects the smooth drawing path.
+const floatLinear = !!gl.getExtension("OES_texture_float_linear");
+function makeTex(w, h) {
+  const t = gl.createTexture();
+  const filt = floatLinear ? gl.LINEAR : gl.NEAREST;
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filt);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filt);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+}
+function makePair(w, h) {
+  const wp = makeTex(w, h), d = makeTex(w, h), fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, wp, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, d, 0);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("Framebuffer incomplete");
+  clearPair({ fbo });
+  return { wp, d, fbo, w, h };
+}
+function clearPair(pair) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pair.fbo);
+  gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]);
+  gl.clearBufferfv(gl.COLOR, 1, [0, 0, 0, 0]);
+}
+function deletePair(pair) {
+  gl.deleteTexture(pair.wp); gl.deleteTexture(pair.d); gl.deleteFramebuffer(pair.fbo);
+}
+
+const sim = { scale: ui.detail, w: 0, h: 0, cur: null, next: null, undo: [] };
+// Each undo step stores two full-size float textures, so keep fewer at large grid sizes.
+const maxUndo = () => (sim.scale > 1.5 ? 1 : sim.scale > 1 ? 2 : 4);
+
+function bindInputs(prog, src) {
+  gl.useProgram(prog.p);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, src.wp);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, src.d);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, paperTex);
+  if (prog.u.uWP) gl.uniform1i(prog.u.uWP, 0);
+  if (prog.u.uD) gl.uniform1i(prog.u.uD, 1);
+  if (prog.u.uPaper) gl.uniform1i(prog.u.uPaper, 2);
+  if (prog.u.uPaperScale) gl.uniform1f(prog.u.uPaperScale, 1 / (sim.scale * 1024));
+}
+function drawTo(dst) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fbo);
+  gl.viewport(0, 0, dst.w, dst.h);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+function swap() { const t = sim.cur; sim.cur = sim.next; sim.next = t; }
+
+function copyPair(src, dst, ratio) {
+  gl.useProgram(progCopy.p);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, src.wp);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, src.d);
+  gl.uniform1i(progCopy.u.uWP, 0); gl.uniform1i(progCopy.u.uD, 1);
+  gl.uniform1f(progCopy.u.uRatio, ratio);
+  drawTo(dst);
+}
+
+function resizeSim(cssW, cssH, scale) {
+  const w = Math.max(8, Math.floor(cssW * scale)), h = Math.max(8, Math.floor(cssH * scale));
+  if (sim.cur && w === sim.w && h === sim.h && scale === sim.scale) return;
+  const a = makePair(w, h), b = makePair(w, h);
+  if (sim.cur) {
+    copyPair(sim.cur, a, sim.scale / scale);
+    deletePair(sim.cur); deletePair(sim.next);
+  }
+  sim.undo.forEach(deletePair); sim.undo = [];
+  $("undo").disabled = true;
+  sim.cur = a; sim.next = b; sim.w = w; sim.h = h; sim.scale = scale;
+}
+
+function snapshot() {
+  let s;
+  if (sim.undo.length >= maxUndo()) s = sim.undo.shift(); else s = makePair(sim.w, sim.h);
+  copyPair(sim.cur, s, 1);
+  sim.undo.push(s);
+  $("undo").disabled = false;
+}
+function undo() {
+  const s = sim.undo.pop();
+  if (!s) return;
+  copyPair(s, sim.next, 1); swap();
+  deletePair(s);
+  $("undo").disabled = sim.undo.length === 0;
+  lastWet = performance.now(); dirty = true;
+}
+
+// ---------- Simulation passes ----------
+function stepSim() {
+  bindInputs(progStep, sim.cur);
+  const u = progStep.u, t = ui.t;
+  // A brush-width stroke dries in roughly the set time once edge drying and spreading are
+  // counted. A large wash takes longer.
+  const evap = 0.3 / (ui.drying * t.sps);
+  gl.uniform1f(u.uK, 0.03 + 0.12 * ui.flow);
+  gl.uniform1f(u.uSpread, 0.6 - 0.4 * ui.flow);
+  gl.uniform1f(u.uEvap, evap);
+  // Pigment settling is relative to the drying rate, so the balance between pigment staining
+  // in place and pigment moving to the edges stays the same at any drying time.
+  gl.uniform1f(u.uDep, t.settle * evap);
+  const edgeCells = Math.max(0.5, t.edgeWidth * sim.scale);
+  gl.uniform1f(u.uMaskStep, 1 / edgeCells);
+  gl.uniform1f(u.uFront, t.front);
+  gl.uniform1f(u.uEdge, t.edge);
+  gl.uniform1f(u.uGran, t.gran);
+  gl.uniform1f(u.uLift, t.lift);
+  gl.uniform1f(u.uPush, t.push);
+  gl.uniform1f(u.uPushMin, t.pushMin);
+  gl.uniform1f(u.uPD, t.pspread);
+  gl.uniform1f(u.uSpeck, t.speck);
+  gl.uniform1f(u.uDryAll, 0);
+  drawTo(sim.next); swap();
+}
+function dryAll() {
+  bindInputs(progStep, sim.cur);
+  gl.uniform1f(progStep.u.uDryAll, 1);
+  drawTo(sim.next); swap();
+}
+
+const stampBuf = new Float32Array(32 * 4);
+function flushStamps() {
+  while (queue.length) {
+    // One draw handles up to 32 stamps that share a mode, in the order they were made.
+    const mode = queue[0].mode;
+    let n = 0;
+    while (n < 32 && n < queue.length && queue[n].mode === mode) n++;
+    const batch = queue.splice(0, n);
+    batch.forEach((s, i) => {
+      stampBuf[i * 4] = s.x; stampBuf[i * 4 + 1] = s.y; stampBuf[i * 4 + 2] = s.r; stampBuf[i * 4 + 3] = s.amt;
+    });
+    bindInputs(progBrush, sim.cur);
+    const u = progBrush.u;
+    gl.uniform4fv(u.uStamps, stampBuf);
+    gl.uniform1i(u.uCount, n);
+    gl.uniform1i(u.uMode, mode);
+    gl.uniform3fv(u.uColK, PIGMENTS[batch[0].colour].K);
+    gl.uniform1f(u.uWater, batch[0].water);
+    gl.uniform1f(u.uPigment, batch[0].pigment);
+    gl.uniform1f(u.uLoad, ui.runsDry ? batch[0].load : 1);
+    gl.uniform1f(u.uPigLoad, ui.runsDry ? batch[0].pload : 1);
+    drawTo(sim.next); swap();
+  }
+}
+
+function render() {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  bindInputs(progRender, sim.cur);
+  const u = progRender.u;
+  gl.uniform1f(u.uDpr, dpr);
+  gl.uniform1f(u.uSimScale, sim.scale);
+  gl.uniform1f(u.uCanvasH, canvas.height);
+  gl.uniform3fv(u.uPaperRGB, PAPER_RGB);
+  gl.uniform1f(u.uSmooth, floatLinear ? 1 : 0);
+  gl.uniform1f(u.uPaperStrength, ui.paper);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+// ---------- Sizing ----------
+let dpr = window.devicePixelRatio || 1;
+let cssW = 0, cssH = 0;
+function onResize() {
+  const r = stage.getBoundingClientRect();
+  // A hidden stage reports no size. Keep the grid, or the painting would be thrown away.
+  if (r.width < 2 || r.height < 2 || contextLost) return;
+  dpr = window.devicePixelRatio || 1;
+  cssW = Math.max(1, Math.round(r.width)); cssH = Math.max(1, Math.round(r.height));
+  canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr);
+  resizeSim(cssW, cssH, ui.detail);
+  dirty = true;
+}
+new ResizeObserver(onResize).observe(stage);
+$("detail").addEventListener("change", e => {
+  ui.detail = Number(e.target.value);
+  resizeSim(cssW, cssH, ui.detail);
+  lastWet = performance.now(); dirty = true;
+});
+
+// ---------- Pen input ----------
+const queue = [];
+const dbg = { stamps: 0, dwell: 0 };
+let stroke = null;
+const ring = $("ring");
+
+function pointOf(e) {
+  const r = canvas.getBoundingClientRect();
+  return [e.clientX - r.left, e.clientY - r.top];
+}
+function pressureOf(e) {
+  if (e.pointerType === "mouse") return 0.6;
+  return e.pressure > 0 ? e.pressure : 0.5;
+}
+// Base stroke length in CSS px for the brush to run down. Water and pigment each scale it by the Water setting.
+const LOAD_LENGTH = 700;
+function radiusFor(p) { return (ui.size / 2) * (0.25 + 0.75 * Math.pow(p, 0.8)); }
+
+function addStamp(x, y, p, amtScale = 1) {
+  const r = radiusFor(p);
+  queue.push({
+    // A brush narrower than one grid cell still paints one cell, with less paint.
+    x: x * sim.scale, y: y * sim.scale, r: Math.max(0.5, r * sim.scale),
+    amt: (0.4 + 0.6 * p) * amtScale * Math.min(1, (r * sim.scale) / 0.5),
+    mode: stroke.mode, colour: stroke.colour, water: stroke.water, pigment: stroke.pigment,
+    load: stroke.load, pload: stroke.pload,
+  });
+  stroke.lastStamp = performance.now(); dbg.stamps++;
+}
+function addSegment(x, y, p) {
+  const [lx, ly] = stroke.last, lp = stroke.lastP;
+  const dist = Math.hypot(x - lx, y - ly);
+  const spacing = Math.max(0.75, radiusFor(Math.max(p, lp)) * 0.18);
+  const n = Math.floor(dist / spacing);
+  for (let i = 1; i <= n; i++) {
+    const t = (i * spacing) / dist;
+    addStamp(lx + (x - lx) * t, ly + (y - ly) * t, lp + (p - lp) * t);
+    if (stroke.mode !== 2) {
+      // A wet brush keeps its water longer but its pigment is diluted and runs out first.
+      // A dry brush (mostly paint) runs out of water first and breaks up on the paper.
+      const w = stroke.water;
+      stroke.load *= Math.exp(-spacing / (LOAD_LENGTH * (0.45 + 1.55 * w)));
+      stroke.pload *= Math.exp(-spacing / (LOAD_LENGTH * (0.5 + 1.0 * (1 - w))));
+    }
+  }
+  if (n > 0) {
+    const t = (n * spacing) / dist;
+    stroke.last = [lx + (x - lx) * t, ly + (y - ly) * t];
+    stroke.lastP = lp + (p - lp) * t;
+  }
+}
+
+canvas.addEventListener("pointerdown", e => {
+  if (e.pointerType === "touch") return;
+  e.preventDefault();
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  let mode = ui.mode;
+  if (e.button === 5 || (e.buttons & 32)) mode = 2;          // pen eraser end
+  else if (e.button === 2 || (e.buttons & 2)) mode = 1;      // pen barrel button or right mouse button
+  snapshot();
+  const [x, y] = pointOf(e), p = pressureOf(e);
+  stroke = { id: e.pointerId, mode, colour: ui.colour, water: ui.water, pigment: ui.pigment,
+             load: 1, pload: 1, last: [x, y], lastP: p, lastStamp: 0 };
+  addStamp(x, y, p);
+  moveRing(e);
+});
+canvas.addEventListener("pointermove", e => {
+  if (e.pointerType === "touch") return;
+  moveRing(e);
+  if (!stroke || e.pointerId !== stroke.id) return;
+  const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+  for (const ev of (evs.length ? evs : [e])) {
+    const [x, y] = pointOf(ev);
+    addSegment(x, y, pressureOf(ev));
+  }
+});
+function endStroke(e) { if (stroke && e.pointerId === stroke.id) stroke = null; }
+canvas.addEventListener("pointerup", endStroke);
+canvas.addEventListener("pointercancel", endStroke);
+canvas.addEventListener("pointerleave", e => { if (!stroke) ring.hidden = true; });
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+function moveRing(e) {
+  if (e.pointerType === "touch") return;
+  const [x, y] = pointOf(e);
+  const p = stroke ? pressureOf(e) : 1;
+  const r = radiusFor(p);
+  ring.hidden = false;
+  const rr = Math.max(r, 2);
+  ring.style.width = ring.style.height = (2 * rr) + "px";
+  ring.style.transform = `translate(${x - rr}px, ${y - rr}px)`;
+}
+
+// ---------- Buttons and keys ----------
+$("undo").addEventListener("click", undo);
+$("dryNow").addEventListener("click", () => { dryAll(); dirty = true; });
+$("clear").addEventListener("click", () => {
+  snapshot(); clearPair(sim.cur); clearPair(sim.next); dirty = true;
+});
+window.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); }
+  else if (e.key === "[" || e.key === "]") {
+    const v = Math.min(100, Math.max(0, Number(sizeEl.value) + (e.key === "]" ? 4 : -4)));
+    sizeEl.value = v; sizeEl.dispatchEvent(new Event("input"));
+  }
+});
+
+// ---------- Frame loop ----------
+let lastT = performance.now(), fps = 60, statsT = 0, simDebt = 0, lagging = false;
+const statsEl = $("stats");
+function frame(t) {
+  if (contextLost) return;
+  const dt = Math.min(0.1, Math.max(0.001, (t - lastT) / 1000));
+  lastT = t; dbg.frames = (dbg.frames || 0) + 1;
+  fps = fps * 0.92 + (1 / dt) * 0.08;
+
+  if (stroke && performance.now() - stroke.lastStamp > 70) { dbg.dwell++; addStamp(stroke.last[0], stroke.last[1], stroke.lastP, 0.5); }
+  if (queue.length) { flushStamps(); lastWet = t; finalDryDone = false; dirty = true; }
+
+  // A large wash can stay wet for about twice the drying time. After that whatever is left
+  // is dried in one go.
+  const active = t - lastWet < (ui.drying * 2 + 5) * 1000;
+  let steps = 0;
+  if (active) {
+    // Steps owed accumulate across frames, so a slow or uneven frame rate still runs the
+    // simulation at the set rate. Above 16 steps per frame the simulation falls behind real time.
+    simDebt = Math.min(simDebt + dt * ui.t.sps, 64);
+    steps = Math.min(16, Math.floor(simDebt));
+    simDebt -= steps;
+    lagging = simDebt >= 16;
+    for (let i = 0; i < steps; i++) stepSim();
+    if (steps) dirty = true;
+  } else {
+    simDebt = 0; lagging = false;
+  }
+  if (!active && !finalDryDone) {
+    dryAll(); finalDryDone = true; dirty = true;
+  }
+  if (dirty) { render(); dirty = false; }
+
+  if (t - statsT > 500) {
+    statsT = t;
+    statsEl.textContent = `${Math.round(fps)} fps · ${active ? steps + " steps/frame" + (lagging ? " (behind)" : "") : "idle"} · grid ${sim.w}×${sim.h}${floatLinear ? "" : " · smooth edges unavailable"}`;
+  }
+  requestAnimationFrame(frame);
+}
+onResize();
+requestAnimationFrame(frame);
+
+// Test hook for automated checks.
+window.__wc = { sim, ui, stepSim, dryAll, render, flushStamps, queue, gl, dbg, get stroke() { return stroke; } };
+})();
+</script>
+
+</body>
+</html>
